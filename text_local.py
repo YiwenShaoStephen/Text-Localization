@@ -165,13 +165,13 @@ def main():
     # about the performance. Comment it if not necessary.
     datailer = iter(trainloader)
     img, classification, bound = datailer.next()
-    torchvision.utils.save_image(img, 'raw.png')
+    torchvision.utils.save_image(img, 'imgs/raw.png')
     for i in range(len(offset_list)):
         torchvision.utils.save_image(
-            bound[:, i:i + 1, :, :], 'bound_{}.png'.format(i))
+            bound[:, i:i + 1, :, :], 'imgs/bound_{}.png'.format(i))
     for i in range(args.num_classes):
         torchvision.utils.save_image(
-            classification[:, i:i + 1, :, :], 'class_{}.png'.format(i))
+            classification[:, i:i + 1, :, :], 'imgs/class_{}.png'.format(i))
     img = torch.autograd.Variable(img).cuda()
     predictions = model(img)
     predictions = predictions.data
@@ -179,10 +179,10 @@ def main():
     bound_pred = predictions[:, args.num_classes:, :, :]
     for i in range(len(offset_list)):
         torchvision.utils.save_image(
-            bound_pred[:, i:i + 1, :, :], 'bound_pred{}.png'.format(i))
+            bound_pred[:, i:i + 1, :, :], 'imgs/bound_pred{}.png'.format(i))
     for i in range(args.num_classes):
         torchvision.utils.save_image(
-            class_pred[:, i:i + 1, :, :], 'class_pred{}.png'.format(i))
+            class_pred[:, i:i + 1, :, :], 'imgs/class_pred{}.png'.format(i))
 
     # # Load the best model and evaluate on test set
     # checkpoint = torch.load('exp/%s/' %
