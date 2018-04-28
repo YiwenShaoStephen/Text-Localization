@@ -11,7 +11,7 @@ import random
 import PIL
 from torchvision import transforms as tsf
 from skimage.io import imread
-from models.Unet_naive import UNet
+from models.Unet import UNet
 from skimage.transform import resize
 from skimage.morphology import label
 from tensorboard_logger import configure, log_value
@@ -55,6 +55,8 @@ parser.add_argument('--val-data', default='./val.pth.tar', type=str,
                     help='Path of processed validation data')
 parser.add_argument('--test-data', default='./test.pth.tar', type=str,
                     help='Path of processed test data')
+parser.add_argument('--num-classes', default=2, type=int,
+                    help='Number of classes to classify')
 parser.add_argument('--tensorboard',
                     help='Log progress to TensorBoard', action='store_false')
 
@@ -66,7 +68,6 @@ random.seed(0)
 def main():
     global args, best_loss
     args = parser.parse_args()
-    args.batch_size = 4
 
     if args.tensorboard:
         print("Using tensorboard")
@@ -87,23 +88,16 @@ def main():
         tsf.ToTensor(),
     ])
 
-    t_trans = tsf.Compose([
-        tsf.ToPILImage(),
-        tsf.Resize((args.img_height, args.img_width),
-                   interpolation=PIL.Image.NEAREST),
-        tsf.ToTensor(),
-    ])
-
     offset_list = [(1, 1), (0, -2)]
 
     # split the training set into training set and validation set
     trainset = Dataset(args.train_data, s_trans, offset_list,
-                       1, args.img_height, args.img_width)
+                       args.num_classes, args.img_height, args.img_width)
     trainloader = torch.utils.data.DataLoader(
         trainset, num_workers=1, batch_size=args.batch_size)
 
     valset = Dataset(args.val_data, s_trans, offset_list,
-                     1, args.img_height, args.img_width)
+                     args.num_classes, args.img_height, args.img_width)
     valloader = torch.utils.data.DataLoader(
         valset, num_workers=1, batch_size=args.batch_size)
 
@@ -115,7 +109,8 @@ def main():
     # torchvision.utils.save_image(img, 'raw.png')
     # torchvision.utils.save_image(bound[:, 0:1, :, :], 'bound1.png')
     # torchvision.utils.save_image(bound[:, 1:2, :, :], 'bound2.png')
-    # torchvision.utils.save_image(class_id, 'class.png')
+    # torchvision.utils.save_image(class_id[:, 0:1, :, :], 'class1.png')
+    # torchvision.utils.save_image(class_id[:, 1:2, :, :], 'class2.png')
     # sys.exit('stop')
 
     NUM_TRAIN = len(trainset)
@@ -126,8 +121,9 @@ def main():
           '{2} samples for validation'.format(NUM_ALL, NUM_TRAIN, NUM_VAL))
 
     # create model
-    # model = UNet(1, in_channels=3, depth=args.depth).cuda()
-    model = UNet(3, 1, len(offset_list))
+    model = UNet(args.num_classes, len(offset_list),
+                 in_channels=3, depth=args.depth).cuda()
+    # model = UNet(3, 1, len(offset_list))
 
     # get the number of model parameters
     print('Number of model parameters: {}'.format(
@@ -137,7 +133,7 @@ def main():
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = t.load(args.resume)
+            checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
             best_loss = checkpoint['best_loss']
             model.load_state_dict(checkpoint['state_dict'])
@@ -167,19 +163,31 @@ def main():
 
     # Visualize some predicted masks on training data to get a better intuition
     # about the performance. Comment it if not necessary.
-    # datailer = iter(trainloader)
-    # img, mask = datailer.next()
-    # torchvision.utils.save_image(img, 'raw.png')
-    # torchvision.utils.save_image(mask, 'mask.png')
-    # img = t.autograd.Variable(img).cuda()
-    # img_pred = model(img)
-    # img_pred = img_pred.data
-    # torchvision.utils.save_image(img_pred > 0.5, 'predicted.png')
+    datailer = iter(trainloader)
+    img, classification, bound = datailer.next()
+    torchvision.utils.save_image(img, 'raw.png')
+    for i in range(len(offset_list)):
+        torchvision.utils.save_image(
+            bound[:, i:i + 1, :, :], 'bound_{}.png'.format(i))
+    for i in range(args.num_classes):
+        torchvision.utils.save_image(
+            classification[:, i:i + 1, :, :], 'class_{}.png'.format(i))
+    img = torch.autograd.Variable(img).cuda()
+    predictions = model(img)
+    predictions = predictions.data
+    class_pred = predictions[:, :args.num_classes, :, :]
+    bound_pred = predictions[:, args.num_classes:, :, :]
+    for i in range(len(offset_list)):
+        torchvision.utils.save_image(
+            bound_pred[:, i:i + 1, :, :], 'bound_pred{}.png'.format(i))
+    for i in range(args.num_classes):
+        torchvision.utils.save_image(
+            class_pred[:, i:i + 1, :, :], 'class_pred{}.png'.format(i))
 
-    # Load the best model and evaluate on test set
-    checkpoint = torch.load('exp/%s/' %
-                            (args.name) + 'model_best.pth.tar')
-    model.load_state_dict(checkpoint['state_dict'])
+    # # Load the best model and evaluate on test set
+    # checkpoint = torch.load('exp/%s/' %
+    #                         (args.name) + 'model_best.pth.tar')
+    # model.load_state_dict(checkpoint['state_dict'])
 
 
 def DataProcess(TRAIN_PATH, TEST_PATH, train_prop, channels):
@@ -301,12 +309,16 @@ class Dataset():
         # class label
         class_label = torch.zeros((self.num_classes, self.height, self.width))
         for c in range(self.num_classes):
-            class_label_unscaled = (torch.FloatTensor(
-                (mask > 0).astype('float'))).unsqueeze(0)
+            if c == 0:
+                class_label_unscaled = (torch.FloatTensor(
+                    (mask == 0).astype('float'))).unsqueeze(0)
+            else:  # TODO, the current is for 2 classes only
+                class_label_unscaled = (torch.FloatTensor(
+                    (mask > 0).astype('float'))).unsqueeze(0)
             class_label[c:c +
-                        1] = self.transformation(class_label_unscaled[c:c + 1])
+                        1] = self.transformation(class_label_unscaled)
 
-        return img, bound, class_label
+        return img, class_label, bound
 
     def __len__(self):
         return len(self.data)
@@ -318,14 +330,19 @@ def Train(trainloader, model, optimizer, epoch):
     batch_time = AverageMeter()
 
     end = time.time()
-    for i, (x_train, y_train) in enumerate(trainloader):
+    for i, (input, class_label, bound) in enumerate(trainloader):
         adjust_learning_rate(optimizer, epoch + 1)
-        x_train = torch.autograd.Variable(x_train.cuda())
-        y_train = torch.autograd.Variable(y_train.cuda(async=True))
+        input = torch.autograd.Variable(input.cuda())
+        bound = torch.autograd.Variable(bound.cuda(async=True))
+        class_label = torch.autograd.Variable(class_label.cuda(async=True))
 
         optimizer.zero_grad()
-        o = model(x_train)
-        loss = soft_dice_loss(o, y_train)
+        output = model(input)
+        # class_pred = o[:, :num_classes, :, :]
+        # bound_pred = o[:, num_classes:, :, :]
+        target = torch.cat((class_label, bound), 1)
+        loss_fn = torch.nn.BCELoss()
+        loss = loss_fn(output, target)
 
         losses.update(loss.data[0], args.batch_size)
 
@@ -355,13 +372,16 @@ def Validate(validateloader, model, epoch):
     # switch to evaluate mode
     model.eval()
 
-    for i, (x_val, mask) in enumerate(validateloader):
-        mask = mask.cuda(async=True)
-        x_val = x_val.cuda()
-        x_val = t.autograd.Variable(x_val, volatile=True)
-        mask = t.autograd.Variable(mask, volatile=True)
-        output = model(x_val)
-        loss = soft_dice_loss(output, mask)
+    for i, (input, class_label, bound) in enumerate(validateloader):
+
+        input = torch.autograd.Variable(input.cuda(), volatile=True)
+        bound = torch.autograd.Variable(bound.cuda(async=True), volatile=True)
+        class_label = torch.autograd.Variable(
+            class_label.cuda(async=True), volatile=True)
+        output = model(input)
+        target = torch.cat((class_label, bound), 1)
+        loss_fn = torch.nn.BCELoss()
+        loss = loss_fn(output, target)
 
         losses.update(loss.data[0], args.batch_size)
 
@@ -404,7 +424,7 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     if not os.path.exists(directory):
         os.makedirs(directory)
     filename = directory + filename
-    t.save(state, filename)
+    torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, 'exp/%s/' %
                         (args.name) + 'model_best.pth.tar')

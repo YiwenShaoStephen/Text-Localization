@@ -138,7 +138,7 @@ class UNet(nn.Module):
         the tranpose convolution (specified by upmode='transpose')
     """
 
-    def __init__(self, num_classes, in_channels=3, depth=5,
+    def __init__(self, num_classes, num_offsets, in_channels=3, depth=5,
                  start_filts=64, up_mode='transpose',
                  merge_mode='concat'):
         """
@@ -178,6 +178,7 @@ class UNet(nn.Module):
                              "depth channels (by half).")
 
         self.num_classes = num_classes
+        self.num_offsets = num_offsets
         self.in_channels = in_channels
         self.start_filts = start_filts
         self.depth = depth
@@ -203,7 +204,7 @@ class UNet(nn.Module):
                              merge_mode=merge_mode)
             self.up_convs.append(up_conv)
 
-        self.conv_final = conv1x1(outs, self.num_classes)
+        self.conv_final = conv1x1(outs, self.num_classes + self.num_offsets)
 
         # add the list of modules to current module
         self.down_convs = nn.ModuleList(self.down_convs)
@@ -246,8 +247,9 @@ if __name__ == "__main__":
     testing
     """
     print "test"
-    model = UNet(3, depth=5, merge_mode='concat')
-    x = Variable(torch.FloatTensor(np.random.random((1, 3, 320, 320))))
+    model = UNet(3, 2, depth=5, merge_mode='concat')
+    x = Variable(torch.FloatTensor(np.random.random((1, 3, 128, 128))))
     out = model(x)
+    print out
     loss = torch.sum(out)
     loss.backward()
